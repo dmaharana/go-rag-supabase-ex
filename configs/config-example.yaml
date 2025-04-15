@@ -1,0 +1,4 @@
+supabase_url: "https://your-supabase-project.supabase.co"
+supabase_key: "your-supabase-anon-key"
+openrouter_key: "Bearer your-openrouter-api-key"
+openrouter_base: "https://openrouter.ai/api/v1"
