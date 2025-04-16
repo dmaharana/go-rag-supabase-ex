@@ -11,6 +11,8 @@ type Config struct {
 	SupabaseKey    string `yaml:"supabase_key"`
 	OpenRouterKey  string `yaml:"openrouter_key"`
 	OpenRouterBase string `yaml:"openrouter_base"`
+	EmbeddingModel string `yaml:"embedding_model"`
+	InferenceModel string `yaml:"inference_model"`
 }
 
 func LoadConfig(path string) (*Config, error) {

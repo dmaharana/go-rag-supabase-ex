@@ -2,19 +2,32 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 
 	"document-rag/internal/config"
-	"document-rag/internal/db" // Ensure db package is imported
+	"document-rag/internal/db"
 	"document-rag/internal/embedding"
 	"document-rag/internal/parser"
 	"document-rag/internal/rag"
 )
 
+const (
+	configFilePath = "./configs/config.yaml"
+)
+
 func main() {
+	filePath := flag.String("file", "", "Path to the document file")
+	flag.Parse()
+
+	if *filePath == "" {
+		fmt.Println("Please provide a document file using the -file flag")
+		return
+	}
+
 	ctx := context.Background()
 
-	cfg, err := config.LoadConfig("config.yaml")
+	cfg, err := config.LoadConfig(configFilePath)
 	if err != nil {
 		fmt.Printf("Error loading config: %v\n", err)
 		return
@@ -27,14 +40,13 @@ func main() {
 	}
 	defer dbinstance.Close()
 
-	embedder, err := embedding.NewEmbedder(cfg.OpenRouterKey, cfg.OpenRouterBase)
+	embedder, err := embedding.NewEmbedder(cfg.OpenRouterKey, cfg.OpenRouterBase, cfg.EmbeddingModel)
 	if err != nil {
 		fmt.Printf("Error initializing embedder: %v\n", err)
 		return
 	}
 
-	filePath := "sample.pdf" // Replace with your document
-	markdown, err := parser.ParseToMarkdown(filePath)
+	markdown, err := parser.ParseToMarkdown(*filePath)
 	if err != nil {
 		fmt.Printf("Error parsing document: %v\n", err)
 		return
@@ -53,7 +65,7 @@ func main() {
 
 	rag := rag.NewRAG(dbinstance, embedder, cfg)
 	query := "What is the main topic of the document?"
-	response, err := rag.Query(ctx, query)
+	response, err := rag.Query(ctx, cfg.InferenceModel, query)
 	if err != nil {
 		fmt.Printf("Error querying: %v\n", err)
 		return

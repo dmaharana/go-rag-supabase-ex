@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tmc/langchaingo/embeddings"
-	"github.com/uptrace/bun"
 	"document-rag/internal/config"
 	"document-rag/internal/db"
 	"document-rag/internal/embedding"
+	"github.com/tmc/langchaingo/embeddings"
+	"github.com/uptrace/bun"
 )
 
 type RAG struct {
@@ -28,7 +28,7 @@ func NewRAG(db *bun.DB, embedder *embeddings.EmbedderImpl, cfg *config.Config) *
 	return &RAG{db: db, embedder: embedder, cfg: cfg}
 }
 
-func (r *RAG) Query(ctx context.Context, query string) (string, error) {
+func (r *RAG) Query(ctx context.Context, inferenceModel, query string) (string, error) {
 	queryEmbedding, err := embedding.GenerateEmbedding(ctx, r.embedder, query)
 	if err != nil {
 		return "", err
@@ -53,7 +53,7 @@ func (r *RAG) Query(ctx context.Context, query string) (string, error) {
 		} `json:"messages"`
 		Stream bool `json:"stream"`
 	}{
-		Model: "openai/gpt-3.5-turbo",
+		Model: inferenceModel,
 		Messages: []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`

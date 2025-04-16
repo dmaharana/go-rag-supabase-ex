@@ -8,11 +8,11 @@ import (
 	"github.com/tmc/langchaingo/llms/openai"
 )
 
-func NewEmbedder(openRouterKey, baseURL string) (*embeddings.EmbedderImpl, error) {
+func NewEmbedder(openRouterKey, baseURL, embeddingModel string) (*embeddings.EmbedderImpl, error) {
 	llm, err := openai.New(
 		openai.WithBaseURL(baseURL),
 		openai.WithToken(strings.TrimPrefix(openRouterKey, "Bearer ")),
-		openai.WithModel("text-embedding-ada-002"),
+		openai.WithModel(embeddingModel),
 	)
 	if err != nil {
 		return nil, err
