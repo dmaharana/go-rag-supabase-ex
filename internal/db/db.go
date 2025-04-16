@@ -3,7 +3,9 @@ package db
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
+	"document-rag/internal/config"
 	_ "github.com/lib/pq"
 	"github.com/uptrace/bun"
 	"github.com/uptrace/bun/dialect/pgdialect"
@@ -24,10 +26,11 @@ func NewDB(sqldb *sql.DB) *bun.DB {
 	return db
 }
 
-func ConnectDB(supabaseURL, supabaseKey string) (*sql.DB, error) {
+func ConnectDB(cfg *config.DbConfig) (*sql.DB, error) {
+	supabaseURL := fmt.Sprintf("postgresql://%s@%s:%s/%s", cfg.User, cfg.Host, cfg.Port, cfg.Database)
 	dsn := supabaseURL + "?sslmode=disable"
-	// return sql.Open("postgres", dsn)
-	return sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn), pgdriver.WithPassword(supabaseKey))), nil
+
+	return sql.OpenDB(pgdriver.NewConnector(pgdriver.WithDSN(dsn), pgdriver.WithPassword(cfg.Password))), nil
 }
 
 func InitDB(ctx context.Context, db *bun.DB) error {

@@ -9,6 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"document-rag/internal/config"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -43,19 +44,19 @@ func NewEmbedder(openRouterKey, baseURL, embeddingModel string) (*embeddings.Emb
 }
 
 // new ollama embedder
-func NewOllamaEmbedder(baseURL, embeddingModel string) (*embeddings.EmbedderImpl, error) {
+func NewOllamaEmbedder(LLMconfig *config.LLMConfig) (*embeddings.EmbedderImpl, error) {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix
 	zerolog.SetGlobalLevel(zerolog.DebugLevel)
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).With().Caller().Logger()
 
 	log.Debug().Interface("config", map[string]string{
-		"base_url":        baseURL,
-		"embedding_model": embeddingModel,
+		"base_url":        LLMconfig.BaseURL,
+		"embedding_model": LLMconfig.Model,
 	}).Msg("Loaded config")
 
 	llm, err := ollama.New(
-		ollama.WithServerURL(baseURL),
-		ollama.WithModel(embeddingModel),
+		ollama.WithServerURL(LLMconfig.BaseURL),
+		ollama.WithModel(LLMconfig.Model),
 	)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error initializing LLM")

@@ -1,4 +1,16 @@
-supabase_url: "https://your-supabase-project.supabase.co"
-supabase_key: "your-supabase-anon-key"
-openrouter_key: "Bearer your-openrouter-api-key"
-openrouter_base: "https://openrouter.ai/api/v1"
+database:
+  host: "aws-0-ca-central-1.pooler.supabase.com"
+  port: 6543
+  user: "database_user"
+  password: "database_****_password"
+  database: "database_name"
+
+embed_llm:
+  llm_base_url: "http://localhost:11434"
+  llm_key: "bearer_ollama_api_key"
+  llm_model: "nomic-embed-text:latest"
+
+query_llm:
+  llm_base_url: "https://openrouter.ai/api/v1"
+  llm_key: "bearer_openrouter_api_key"
+  llm_model: "openai/gpt-4.1"

@@ -28,7 +28,7 @@ func NewRAG(db *bun.DB, embedder *embeddings.EmbedderImpl, cfg *config.Config) *
 	return &RAG{db: db, embedder: embedder, cfg: cfg}
 }
 
-func (r *RAG) Query(ctx context.Context, inferenceModel, query string) (string, error) {
+func (r *RAG) Query(ctx context.Context, query string) (string, error) {
 	queryEmbedding, err := embedding.GenerateEmbedding(ctx, r.embedder, query)
 	if err != nil {
 		return "", err
@@ -53,7 +53,7 @@ func (r *RAG) Query(ctx context.Context, inferenceModel, query string) (string, 
 		} `json:"messages"`
 		Stream bool `json:"stream"`
 	}{
-		Model: inferenceModel,
+		Model: r.cfg.QueryLLM.Model,
 		Messages: []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
@@ -69,12 +69,12 @@ func (r *RAG) Query(ctx context.Context, inferenceModel, query string) (string, 
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", r.cfg.OpenRouterBase+"/v1/chat/completions", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", r.cfg.QueryLLM.BaseURL+"/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}
 
-	req.Header.Set("Authorization", r.cfg.OpenRouterKey)
+	req.Header.Set("Authorization", r.cfg.QueryLLM.Key)
 	req.Header.Set("Content-Type", "application/json")
 
 	client := &http.Client{Timeout: 60 * time.Second}

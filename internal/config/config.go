@@ -7,12 +7,23 @@ import (
 )
 
 type Config struct {
-	SupabaseURL    string `yaml:"supabase_url"`
-	SupabaseKey    string `yaml:"supabase_key"`
-	OpenRouterKey  string `yaml:"openrouter_key"`
-	OpenRouterBase string `yaml:"openrouter_base"`
-	EmbeddingModel string `yaml:"embedding_model"`
-	InferenceModel string `yaml:"inference_model"`
+	Database DbConfig  `yaml:"database"`
+	EmbedLLM LLMConfig `yaml:"embed_llm"`
+	QueryLLM LLMConfig `yaml:"query_llm"`
+}
+
+type DbConfig struct {
+	Host     string `yaml:"host"`
+	Port     string `yaml:"port"`
+	User     string `yaml:"user"`
+	Password string `yaml:"password"`
+	Database string `yaml:"database"`
+}
+
+type LLMConfig struct {
+	BaseURL string `yaml:"llm_base_url"`
+	Key     string `yaml:"llm_key"`
+	Model   string `yaml:"llm_model"`
 }
 
 func LoadConfig(path string) (*Config, error) {
