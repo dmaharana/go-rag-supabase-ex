@@ -69,7 +69,7 @@ func (r *RAG) Query(ctx context.Context, inferenceModel, query string) (string, 
 		return "", err
 	}
 
-	req, err := http.NewRequest("POST", r.cfg.OpenRouterBase+"/chat/completions", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest("POST", r.cfg.OpenRouterBase+"/v1/chat/completions", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return "", err
 	}

@@ -1,2 +1,8 @@
 configs/config.yaml
 build/*
+*.odt*
+*.doc
+*.docx
+*.pdf
+*.pptx
+*.xlsx
