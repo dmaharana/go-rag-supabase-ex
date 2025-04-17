@@ -4,6 +4,7 @@ database:
   user: "database_user"
   password: "database_****_password"
   database: "database_name"
+  debug: true
 
 embed_llm:
   llm_base_url: "http://localhost:11434"
