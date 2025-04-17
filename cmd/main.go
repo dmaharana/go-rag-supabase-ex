@@ -19,6 +19,7 @@ import (
 
 const (
 	configFilePath = "./configs/config.yaml"
+	vectorSize     = 768
 )
 
 func main() {
@@ -59,14 +60,14 @@ func storeFileEmbedding(ctx context.Context, filePath string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error connecting to database")
 	}
-	dbInstance := db.NewDB(dbClient)
+	dbInstance := db.NewDB(dbClient, cfg.Database.Debug)
 	defer dbInstance.Close()
 
 	if err := db.DropDocuments(ctx, dbInstance); err != nil {
 		log.Fatal().Err(err).Msg("Error clearing documents")
 	}
 
-	if err := db.InitDB(ctx, dbInstance); err != nil {
+	if err := db.InitDB(ctx, dbInstance, vectorSize); err != nil {
 		log.Fatal().Err(err).Msg("Error initializing database")
 	}
 
@@ -75,17 +76,30 @@ func storeFileEmbedding(ctx context.Context, filePath string) {
 		log.Fatal().Err(err).Msg("Error initializing embedder")
 	}
 
-	markdown, err := parser.ParseToMarkdown(filePath)
+	chunks, err := parser.ParseToMarkdown(filePath, cfg)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error parsing document")
+		log.Error().Err(err).Msg("Error parsing document")
+		return
 	}
 
-	embedding, err := embedding.GenerateEmbedding(ctx, embedder, markdown)
+	chunkEmbeddings, err := embedding.GenerateEmbedding(ctx, embedder, filePath, chunks)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error generating embedding")
 	}
 
-	if err := db.StoreDocument(ctx, dbInstance, markdown, embedding); err != nil {
+	// Convert chunk embeddings to Document records for batch storage
+	docs := make([]db.Document, len(chunkEmbeddings))
+	for i, ce := range chunkEmbeddings {
+		docs[i] = db.Document{
+			Content:        ce.Content,
+			Embedding:      ce.Embedding,
+			SourceFilename: ce.SourceFilename,
+			PageNumber:     ce.PageNumber,
+			ChunkID:        ce.ChunkID,
+		}
+	}
+
+	if err := db.StoreDocuments(ctx, dbInstance, docs); err != nil {
 		log.Fatal().Err(err).Msg("Error storing document")
 	}
 }
@@ -102,7 +116,7 @@ func performRAG(ctx context.Context, query string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error connecting to database")
 	}
-	dbInstance := db.NewDB(dbClient)
+	dbInstance := db.NewDB(dbClient, cfg.Database.Debug)
 	defer dbInstance.Close()
 
 	embedder, err := embedding.NewOllamaEmbedder(&cfg.EmbedLLM)
@@ -115,6 +129,15 @@ func performRAG(ctx context.Context, query string) {
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error querying")
 	}
-	fmt.Println(response)
+
+	log.Info().Msg("Query: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+	fmt.Printf("%s\n\n", query)
+
+	log.Info().Msg("Source: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+	fmt.Printf("%s\n\n", response.Source)
+
+	log.Info().Msg("Assistant: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+
+	fmt.Printf("%s\n\n", response.Content)
 
 }

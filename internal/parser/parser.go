@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"document-rag/internal/config"
+	"document-rag/internal/models"
 	"github.com/ledongthuc/pdf"
 	"github.com/nguyenthenguyen/docx"
 	"github.com/tealeg/xlsx"
@@ -18,11 +20,49 @@ import (
 	"github.com/yuin/goldmark/renderer/html"
 )
 
-func ParseToMarkdown(filePath string) (string, error) {
+// // Chunk represents a parsed chunk with metadata
+// type Chunk struct {
+// 	Content    string
+// 	PageNumber *int
+// }
+
+type Parser interface {
+	ParseToMarkdown(filePath string) ([]models.Chunk, error)
+}
+
+type ParserConfig struct {
+	Config *config.Config
+}
+
+const (
+	defaultChunkSize    = 1000 // bytes
+	defaultChunkOverlap = 500  // bytes
+	defaultPageNumber   = 1
+)
+
+func ParseToMarkdown(filePath string, cfg *config.Config) ([]models.Chunk, error) {
+
+	// if config is nil, use default values
+	if cfg == nil {
+		cfg = &config.Config{
+			RAG: config.RAGConfig{
+				ChunkSize:    defaultChunkSize,
+				ChunkOverlap: defaultChunkOverlap,
+			},
+		}
+	} else if cfg.RAG.ChunkSize == 0 || cfg.RAG.ChunkOverlap == 0 {
+		cfg.RAG.ChunkSize = defaultChunkSize
+		cfg.RAG.ChunkOverlap = defaultChunkOverlap
+	}
+
+	p := ParserConfig{
+		Config: cfg,
+	}
+
 	ext := strings.ToLower(filepath.Ext(filePath))
 	switch ext {
 	case ".pdf":
-		return parsePDF(filePath)
+		return p.parsePDF(filePath)
 	case ".docx":
 		return parseDOCX(filePath)
 	case ".pptx":
@@ -34,71 +74,87 @@ func ParseToMarkdown(filePath string) (string, error) {
 	case ".txt":
 		return parseText(filePath)
 	default:
-		return "", fmt.Errorf("unsupported file format: %s", ext)
+		return nil, fmt.Errorf("unsupported file format: %s", ext)
 	}
 }
 
-func parsePDF(filePath string) (string, error) {
+func (p *ParserConfig) parsePDF(filePath string) ([]models.Chunk, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer f.Close()
 
 	// Get file size for reader initialization
 	stat, err := f.Stat()
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	reader, err := pdf.NewReader(f, stat.Size())
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var text strings.Builder
+	var chunks []models.Chunk
 	numPages := reader.NumPage()
 	for i := 1; i <= numPages; i++ {
-		page := reader.Page(i) // Use Page(i) instead of GetPage
+		page := reader.Page(i)
 		pageText, err := page.GetPlainText(nil)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		text.WriteString(pageText + "\n\n")
+		pageNum := i
+		markdown, err := convertToMarkdown(pageText)
+		if err != nil {
+			return nil, err
+		}
+
+		chunks = append(chunks, p.getChunks(markdown, pageNum)...)
 	}
-	return convertToMarkdown(text.String())
+	return chunks, nil
 }
 
-func parseDOCX(filePath string) (string, error) {
+func parseDOCX(filePath string) ([]models.Chunk, error) {
 	r, err := docx.ReadDocxFile(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer r.Close()
 
-	// Access the underlying Docx struct
 	doc := r.Editable()
-	content := doc.GetContent() // GetContent returns a string
-	// Split content into paragraphs based on newlines for Markdown formatting
+	content := doc.GetContent()
 	paragraphs := strings.Split(content, "\n")
-	var text strings.Builder
+	var chunks []models.Chunk
 	for _, p := range paragraphs {
-		if p != "" {
-			text.WriteString(p + "\n\n")
+		if p == "" {
+			continue
+		}
+		chunk := models.Chunk{
+			Content:    p,
+			PageNumber: defaultPageNumber, // DOCX has no page numbers
+		}
+		markdown, err := convertToMarkdown(chunk.Content)
+		if err != nil {
+			return nil, err
+		}
+		chunk.Content = markdown
+		if strings.TrimSpace(chunk.Content) != "" {
+			chunks = append(chunks, chunk)
 		}
 	}
-	return convertToMarkdown(text.String())
+	return chunks, nil
 }
 
-func parsePPTX(filePath string) (string, error) {
+func parsePPTX(filePath string) ([]models.Chunk, error) {
 	f, err := zip.OpenReader(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer f.Close()
 
-	var text strings.Builder
-	for _, file := range f.File {
+	var chunks []models.Chunk
+	for slideNum, file := range f.File {
 		if strings.HasPrefix(file.Name, "ppt/slides/slide") {
 			rc, err := file.Open()
 			if err != nil {
@@ -110,20 +166,34 @@ func parsePPTX(filePath string) (string, error) {
 				continue
 			}
 			slideText := extractTextFromXML(string(data))
-			text.WriteString(slideText + "\n\n")
+			chunk := models.Chunk{
+				Content:    slideText,
+				PageNumber: defaultPageNumber, // Treat slides as non-paged
+			}
+			markdown, err := convertToMarkdown(chunk.Content)
+			if err != nil {
+				return nil, err
+			}
+			chunk.Content = markdown
+			if strings.TrimSpace(chunk.Content) != "" {
+				slideNumCopy := slideNum + 1 // 1-based indexing
+				chunk.PageNumber = slideNumCopy
+				chunks = append(chunks, chunk)
+			}
 		}
 	}
-	return convertToMarkdown(text.String())
+	return chunks, nil
 }
 
-func parseXLSX(filePath string) (string, error) {
+func parseXLSX(filePath string) ([]models.Chunk, error) {
 	f, err := xlsx.OpenFile(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
-	var text strings.Builder
-	for _, sheet := range f.Sheets {
+	var chunks []models.Chunk
+	for sheetNum, sheet := range f.Sheets {
+		var text strings.Builder
 		text.WriteString(fmt.Sprintf("## Sheet: %s\n", sheet.Name))
 		for _, row := range sheet.Rows {
 			for _, cell := range row.Cells {
@@ -131,24 +201,38 @@ func parseXLSX(filePath string) (string, error) {
 			}
 			text.WriteString("\n")
 		}
-		text.WriteString("\n")
+		chunk := models.Chunk{
+			Content:    text.String(),
+			PageNumber: defaultPageNumber, // XLSX has no pages
+		}
+		markdown, err := convertToMarkdown(chunk.Content)
+		if err != nil {
+			return nil, err
+		}
+		chunk.Content = markdown
+		if strings.TrimSpace(chunk.Content) != "" {
+			sheetNumCopy := sheetNum + 1 // 1-based indexing
+			chunk.PageNumber = sheetNumCopy
+			chunks = append(chunks, chunk)
+		}
 	}
-	return convertToMarkdown(text.String())
+	return chunks, nil
 }
 
-func parseODS(filePath string) (string, error) {
+func parseODS(filePath string) ([]models.Chunk, error) {
 	f, err := excelize.OpenFile(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer f.Close()
 
-	var text strings.Builder
-	for _, sheetName := range f.GetSheetList() {
+	var chunks []models.Chunk
+	for sheetNum, sheetName := range f.GetSheetList() {
 		rows, err := f.GetRows(sheetName)
 		if err != nil {
 			continue
 		}
+		var text strings.Builder
 		text.WriteString(fmt.Sprintf("## Sheet: %s\n", sheetName))
 		for _, row := range rows {
 			for _, cell := range row {
@@ -156,17 +240,42 @@ func parseODS(filePath string) (string, error) {
 			}
 			text.WriteString("\n")
 		}
-		text.WriteString("\n")
+		chunk := models.Chunk{
+			Content:    text.String(),
+			PageNumber: defaultPageNumber, // ODS has no pages
+		}
+		markdown, err := convertToMarkdown(chunk.Content)
+		if err != nil {
+			return nil, err
+		}
+		chunk.Content = markdown
+		if strings.TrimSpace(chunk.Content) != "" {
+			sheetNumCopy := sheetNum + 1 // 1-based indexing
+			chunk.PageNumber = sheetNumCopy
+			chunks = append(chunks, chunk)
+		}
 	}
-	return convertToMarkdown(text.String())
+	return chunks, nil
 }
 
-func parseText(filePath string) (string, error) {
+func parseText(filePath string) ([]models.Chunk, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return convertToMarkdown(string(data))
+	chunk := models.Chunk{
+		Content:    string(data),
+		PageNumber: defaultPageNumber, // TXT has no pages
+	}
+	markdown, err := convertToMarkdown(chunk.Content)
+	if err != nil {
+		return nil, err
+	}
+	chunk.Content = markdown
+	if strings.TrimSpace(chunk.Content) == "" {
+		return nil, nil
+	}
+	return []models.Chunk{chunk}, nil
 }
 
 func convertToMarkdown(text string) (string, error) {
@@ -180,6 +289,12 @@ func convertToMarkdown(text string) (string, error) {
 	if err := md.Convert([]byte(text), &buf); err != nil {
 		return "", err
 	}
+
+	// Trim leading and trailing newlines
+	buf.WriteString("\n")
+	// Trim leading and trailing spaces
+	buf.WriteString(strings.Trim(buf.String(), " \t\n\r"))
+
 	return buf.String(), nil
 }
 
@@ -198,3 +313,77 @@ func extractTextFromXML(xmlContent string) string {
 	return text.String()
 }
 
+func chunkContent(content string, maxChars, overlapChars int) []string {
+	// Handle edge cases
+	if maxChars <= 0 {
+		return nil
+	}
+	if overlapChars < 0 {
+		overlapChars = 0
+	}
+	if overlapChars >= maxChars {
+		overlapChars = maxChars / 2 // Reasonable default to avoid excessive overlap
+	}
+	if len(content) == 0 {
+		return nil
+	}
+
+	var chunks []string
+	content = strings.TrimSpace(content)
+	contentLen := len(content)
+
+	// If content is shorter than maxChars, return it as a single chunk
+	if contentLen <= maxChars {
+		return []string{content}
+	}
+
+	// Iterate through content, creating chunks with overlap
+	start := 0
+	for start < contentLen {
+		// Calculate end index, ensuring it doesn't exceed content length
+		end := min(start+maxChars, contentLen)
+
+		// Find a clean break point (e.g., end of a word or sentence) if possible
+		if end < contentLen {
+			// Look for a space or punctuation within the last 10% of the chunk
+			lookBack := min(maxChars/10, end-start)
+			for i := end - 1; i >= end-lookBack && i > start; i-- {
+				if content[i] == ' ' || content[i] == '\n' || content[i] == '.' {
+					end = i + 1
+					break
+				}
+			}
+		}
+
+		// Extract the chunk and append it
+		chunk := strings.TrimSpace(content[start:end])
+		if chunk != "" {
+			chunks = append(chunks, chunk)
+		}
+
+		// Move start forward, accounting for overlap
+		start += maxChars - overlapChars
+		if start >= contentLen {
+			break
+		}
+	}
+
+	return chunks
+}
+
+// get chunks from content and page number
+func (p *ParserConfig) getChunks(content string, pageNumber int) []models.Chunk {
+	var chunks []models.Chunk
+
+	// generate chunk strings from content
+	chunkStrings := chunkContent(content, p.Config.RAG.ChunkSize, p.Config.RAG.ChunkOverlap)
+	for i, chunkString := range chunkStrings {
+		chunks = append(chunks, models.Chunk{
+			Content:    chunkString,
+			PageNumber: pageNumber,
+			ChunkID:    i + 1,
+		})
+	}
+
+	return chunks
+}

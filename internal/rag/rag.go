@@ -1,131 +1,129 @@
 package rag
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"strings"
-	"time"
 
 	"document-rag/internal/config"
 	"document-rag/internal/db"
-	"document-rag/internal/embedding"
+	"document-rag/internal/models"
+
 	"github.com/tmc/langchaingo/embeddings"
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/uptrace/bun"
 )
 
 type RAG struct {
-	db       *bun.DB
-	embedder *embeddings.EmbedderImpl
-	cfg      *config.Config
+	db         *bun.DB
+	embedder   *embeddings.EmbedderImpl
+	cfg        *config.Config
+	maxResults int
 }
+
+const defaultMaxResults = 5
 
 func NewRAG(db *bun.DB, embedder *embeddings.EmbedderImpl, cfg *config.Config) *RAG {
-	return &RAG{db: db, embedder: embedder, cfg: cfg}
+	return &RAG{
+		db:       db,
+		embedder: embedder,
+		cfg:      cfg,
+		maxResults: func() int {
+			if cfg.RAG.MaxResults > 0 {
+				return cfg.RAG.MaxResults
+			}
+			return defaultMaxResults
+		}(),
+	}
 }
 
-func (r *RAG) Query(ctx context.Context, query string) (string, error) {
-	queryEmbedding, err := embedding.GenerateEmbedding(ctx, r.embedder, query)
+func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, error) {
+	rsp := models.PromptResponse{
+		Query:   query,
+		Source:  "",
+		Content: "",
+	}
+	queryEmbedding, err := r.embedder.EmbedQuery(ctx, query)
 	if err != nil {
-		return "", err
+		return rsp, err
 	}
 
-	docs, err := db.SearchDocuments(ctx, r.db, queryEmbedding, 5)
+	// if maxResults is 0, use default value
+	if r.maxResults == 0 {
+		r.maxResults = defaultMaxResults
+	}
+
+	docs, err := db.SearchDocuments(ctx, r.db, queryEmbedding, r.maxResults)
 	if err != nil {
-		return "", err
+		return rsp, err
 	}
 
-	var context strings.Builder
-	for _, doc := range docs {
-		context.WriteString(doc.Content + "\n\n")
+	var qContext strings.Builder
+	var references []string
+	for i, doc := range docs {
+		qContext.WriteString(doc.Content + "\n\n")
+
+		// Build reference string
+		ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.SourceFilename, doc.PageNumber, doc.ChunkID)
+		references = append(references, fmt.Sprintf("[%d] %s", i+1, ref))
 	}
 
-	// Stream response from OpenRouter
-	payload := struct {
-		Model    string `json:"model"`
-		Messages []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		} `json:"messages"`
-		Stream bool `json:"stream"`
-	}{
-		Model: r.cfg.QueryLLM.Model,
-		Messages: []struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
-		}{
-			{Role: "system", Content: "You are a helpful assistant. Use the provided context to answer the query."},
-			{Role: "user", Content: fmt.Sprintf("Context:\n%s\nQuery: %s", context.String(), query)},
-		},
-		Stream: true,
+	if qContext.String() == "" {
+		return rsp, fmt.Errorf("no documents found")
 	}
 
-	jsonData, err := json.Marshal(payload)
+	rsp.Source = qContext.String()
+
+	llm, err := openai.New(
+		openai.WithBaseURL(r.cfg.QueryLLM.BaseURL),
+		openai.WithToken(strings.TrimPrefix(r.cfg.QueryLLM.Key, "Bearer ")),
+		openai.WithModel(r.cfg.QueryLLM.Model),
+	)
 	if err != nil {
-		return "", err
-	}
-
-	req, err := http.NewRequest("POST", r.cfg.QueryLLM.BaseURL+"/v1/chat/completions", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	req.Header.Set("Authorization", r.cfg.QueryLLM.Key)
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 60 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("request failed: %d, %s", resp.StatusCode, string(body))
+		return rsp, err
 	}
 
 	var response strings.Builder
-	reader := bufio.NewReader(resp.Body)
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return "", err
-		}
-
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, ":") {
-			continue
-		}
-
-		if line == "data: [DONE]" {
-			break
-		}
-
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-			var chunk struct {
-				Choices []struct {
-					Delta struct {
-						Content string `json:"content"`
-					} `json:"delta"`
-				} `json:"choices"`
-			}
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				continue
-			}
-			if len(chunk.Choices) > 0 && chunk.Choices[0].Delta.Content != "" {
-				response.WriteString(chunk.Choices[0].Delta.Content)
-			}
-		}
+	prompt := fmt.Sprintf("Based on the following context, answer the query: %s\n\nContext:\n%s", query, qContext.String())
+	msgContent := []llms.MessageContent{
+		llms.MessageContent{
+			Role:  llms.ChatMessageTypeSystem,
+			Parts: []llms.ContentPart{llms.TextContent{Text: "You are a helpful assistant. Answer the query based only on the provided context."}},
+		},
+		llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+		},
 	}
 
-	return response.String(), nil
+	// Stream the response
+	// _, err = llm.GenerateContent(ctx, msgContent, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+	// 	chunkStr := string(chunk)
+	// 	if strings.Contains(chunkStr, ": OPENROUTER PROCESSING") {
+	// 		return nil
+	// 	}
+	// 	response.WriteString(chunkStr)
+	// 	return nil
+	// }))
+
+	res, err := llm.GenerateContent(ctx, msgContent)
+	if err != nil {
+		return rsp, err
+	}
+
+	if len(res.Choices) == 0 {
+		return rsp, fmt.Errorf("no response from LLM")
+	}
+	response.WriteString(res.Choices[0].Content)
+
+	// Append references to the response
+	response.WriteString("\n\nReferences:\n")
+	for _, ref := range references {
+		response.WriteString(ref + "\n")
+	}
+
+	rsp.Content = response.String()
+
+	return rsp, nil
 }

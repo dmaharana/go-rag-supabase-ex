@@ -10,6 +10,7 @@ type Config struct {
 	Database DbConfig  `yaml:"database"`
 	EmbedLLM LLMConfig `yaml:"embed_llm"`
 	QueryLLM LLMConfig `yaml:"query_llm"`
+	RAG      RAGConfig `yaml:"rag_config"`
 }
 
 type DbConfig struct {
@@ -18,12 +19,19 @@ type DbConfig struct {
 	User     string `yaml:"user"`
 	Password string `yaml:"password"`
 	Database string `yaml:"database"`
+	Debug    bool   `yaml:"debug"`
 }
 
 type LLMConfig struct {
 	BaseURL string `yaml:"llm_base_url"`
 	Key     string `yaml:"llm_key"`
 	Model   string `yaml:"llm_model"`
+}
+
+type RAGConfig struct {
+	ChunkSize    int `yaml:"chunk_size"`
+	ChunkOverlap int `yaml:"chunk_overlap"`
+	MaxResults   int `yaml:"max_results"`
 }
 
 func LoadConfig(path string) (*Config, error) {
