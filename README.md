@@ -54,15 +54,11 @@ This project is built using Go. Demonstrate how to parse multiple document forma
 example:
 
 ```bash
-`go run cmd/main.go -file "sample.pdf"`
-`go run cmd/main.go -query "What is a typical atom response?"`
-`go run cmd/main.go -query "What is the community mailing list?"`
+go run cmd/main.go -file sample.pdf
+go run cmd/main.go -query "What is a typical atom response?"
+go run cmd/main.go -query "What is the community mailing list?"
 ```
-
-## Contributing
-
-Provide guidelines for contributing to the project.
 
 ## License
 
-Specify the license under which the project is released.
+Please refer to the [LICENSE](LICENSE) file for details about the license under which this project is released.
