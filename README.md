@@ -2,11 +2,14 @@
 
 ## Description
 
-Provide a brief description of the project.
+This project is built using Go. Demonstrate how to parse multiple document formats, vectorize them, and use them to answer questions.
 
 ## Features
 
-- List the key features of the project.
+- Parse multiple document formats (PDF, DOCX, PPTX, XLSX, ODS)
+- Vectorize parsed documents
+- Store parsed documents in a postgres database (with vector extension)
+- Use vectorized documents to answer questions
 
 ## Setup
 
@@ -49,9 +52,12 @@ Provide a brief description of the project.
   `go run cmd/main.go -query "your query"`
 
 example:
+
+```bash
 `go run cmd/main.go -file "sample.pdf"`
 `go run cmd/main.go -query "What is a typical atom response?"`
 `go run cmd/main.go -query "What is the community mailing list?"`
+```
 
 ## Contributing
 
