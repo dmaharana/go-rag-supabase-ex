@@ -15,3 +15,8 @@ query_llm:
   llm_base_url: "https://openrouter.ai/api/v1"
   llm_key: "bearer_openrouter_api_key"
   llm_model: "openai/gpt-4.1"
+
+rag_config:
+  chunk_size: 1000
+  chunk_overlap: 500
+  max_results: 3
