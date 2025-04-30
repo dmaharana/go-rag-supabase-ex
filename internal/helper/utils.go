@@ -21,7 +21,7 @@ func GenerateUUID() (string, error) {
 func PrettyPrint(v interface{}) {
 	b, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		log.Warn().Msg("Error pretty printing")
+		log.Error().Err(err).Msg("Error pretty printing")
 	}
 	fmt.Println(string(b))
 }

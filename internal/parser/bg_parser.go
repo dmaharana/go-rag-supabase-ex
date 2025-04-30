@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"document-rag/internal/config"
+	"document-rag/internal/models"
+
 	"github.com/rs/zerolog/log"
 )
 
@@ -19,11 +21,16 @@ type BGSection struct {
 	ChunkID       int    `json:"chunk_id"`
 }
 
+type bgParserState struct {
+    chapter, title, expandedTitle string
+    currentSpeaker, currentContent string
+    result []BGSection
+    cfg *config.Config
+}
+
 // ParseBGText parses the BG text according to custom rules and returns a slice of BGSection
 func ParseBGText(input string, cfg *config.Config) []BGSection {
-	var result []BGSection
-	var chapter, title, expandedTitle string
-	var currentSpeaker, currentContent string
+	var state bgParserState
 
 	// if config is nil, use default values
 	if cfg == nil {
@@ -38,111 +45,86 @@ func ParseBGText(input string, cfg *config.Config) []BGSection {
 		cfg.RAG.ChunkOverlap = defaultChunkOverlap
 	}
 
-	chapterRe := regexp.MustCompile(`(?m)^CHAPTER (.+)$`)
-	speakerRe := regexp.MustCompile(`^(Dhritirashtra|Sanjaya|Krishna|Arjuna)[\.:]\s*`)
-	titleRe := regexp.MustCompile(`(?m)^Entitled (.+)$`)
-	expandedTitleRe := regexp.MustCompile(`(?m)^Or (.+)$`)
-	fnRe := regexp.MustCompile(`^\[FN#\d+\]`)
+	chapterRe := regexp.MustCompile(models.ChapterRegex)
+	speakerRe := regexp.MustCompile(models.SpeakerRegex)
+	titleRe := regexp.MustCompile(models.TitleRegex)
+	expandedTitleRe := regexp.MustCompile(models.ExpandedTitleRegex)
+	fnRe := regexp.MustCompile(models.FnRegex)
 
-	content, err := os.ReadFile(input)
+	f, err := os.Open(input)
 	if err != nil {
-		log.Fatal().Err(err).Msgf("Failed to read file: %s", input)
+		log.Error().Err(err).Msgf("Failed to open file: %s", input)
+		return nil
 	}
-	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-
 		if fnRe.MatchString(line) {
 			break
 		}
-
-		if m := chapterRe.FindStringSubmatch(line); m != nil {
-			
-			// save previous record
-			if currentSpeaker != "" && currentContent != "" {
-				entry := BGSection{
-					Chapter:       chapter,
-					Title:         title,
-					ExpandedTitle: expandedTitle,
-					Speaker:       currentSpeaker,
-					Content:       strings.TrimSpace(currentContent),
-				}
-				chunks := chunkSaveContent(entry, cfg.RAG.ChunkSize, cfg.RAG.ChunkOverlap)
-				if len(chunks) > 0 {
-					result = append(result, chunks...)
-				}
-			}
-
-			chapter = m[1]
-			// reset current content
-			currentContent = ""
-			continue
-		}
-		if m := titleRe.FindStringSubmatch(line); m != nil {
-			title = m[1]
-			// remove double quotes
-			title = strings.ReplaceAll(title, "\"", "")
-			result = updateTitleOfPreviousRecords(result, chapter, title)
-			continue
-		}
-		if m := expandedTitleRe.FindStringSubmatch(line); m != nil {
-			expandedTitle = m[1]
-			// remove double quotes
-			expandedTitle = strings.ReplaceAll(expandedTitle, "\"", "")
-			result = updateExpandedTitleOfPreviousRecords(result, chapter, expandedTitle)
-			continue
-		}
-		if m := speakerRe.FindStringSubmatch(line); m != nil {
-			// Store previous content if exists
-			if currentSpeaker != "" && currentContent != "" {
-				entry := BGSection{
-					Chapter:       chapter,
-					Title:         "",
-					ExpandedTitle: "",
-					Speaker:       currentSpeaker,
-					Content:       strings.TrimSpace(currentContent),
-				}
-				chunks := chunkSaveContent(entry, cfg.RAG.ChunkSize, cfg.RAG.ChunkOverlap)
-				if len(chunks) > 0 {
-					result = append(result, chunks...)
-				}
-			}
-
-			// New speaker
-			currentSpeaker = m[1]
-			// Reset current content
-			currentContent = ""
-			continue
-		}
-		// If inside a speaker section, accumulate content
-		if currentSpeaker != "" {
-			if currentContent != "" {
-				currentContent += "\n"
-			}
-			currentContent += line
-		}
+		processBGLine(line, &state, chapterRe, speakerRe, titleRe, expandedTitleRe, cfg)
 	}
-	// Store last section
-	if currentSpeaker != "" && currentContent != "" {
+	handleSpeakerChange(&state, cfg, true) // store last section if needed
+	return state.result
+}
+
+// processBGLine handles a single line of BG text, updating the parser state accordingly
+func processBGLine(line string, state *bgParserState, chapterRe, speakerRe, titleRe, expandedTitleRe *regexp.Regexp, cfg *config.Config) {
+	if m := chapterRe.FindStringSubmatch(line); m != nil {
+		handleSpeakerChange(state, cfg, false)
+		state.chapter = m[1]
+		state.currentContent = ""
+		return
+	}
+	if m := titleRe.FindStringSubmatch(line); m != nil {
+		state.title = strings.ReplaceAll(m[1], "\"", "")
+		state.result = updateTitleOfPreviousRecords(state.result, state.chapter, state.title)
+		return
+	}
+	if m := expandedTitleRe.FindStringSubmatch(line); m != nil {
+		state.expandedTitle = strings.ReplaceAll(m[1], "\"", "")
+		state.result = updateExpandedTitleOfPreviousRecords(state.result, state.chapter, state.expandedTitle)
+		return
+	}
+	if m := speakerRe.FindStringSubmatch(line); m != nil {
+		handleSpeakerChange(state, cfg, false)
+		state.currentSpeaker = m[1]
+		state.currentContent = ""
+		return
+	}
+	// If inside a speaker section, accumulate content
+	if state.currentSpeaker != "" {
+		if state.currentContent != "" {
+			state.currentContent += "\n"
+		}
+		state.currentContent += line
+	}
+}
+
+// handleSpeakerChange saves the current speaker's content if present, and resets content if not final
+func handleSpeakerChange(state *bgParserState, cfg *config.Config, final bool) {
+	if state.currentSpeaker != "" && state.currentContent != "" {
 		entry := BGSection{
-			Chapter:       chapter,
-			Title:         title,
-			ExpandedTitle: expandedTitle,
-			Speaker:       currentSpeaker,
-			Content:       strings.TrimSpace(currentContent),
+			Chapter:       state.chapter,
+			Title:         state.title,
+			ExpandedTitle: state.expandedTitle,
+			Speaker:       state.currentSpeaker,
+			Content:       strings.TrimSpace(state.currentContent),
 		}
 		chunks := chunkSaveContent(entry, cfg.RAG.ChunkSize, cfg.RAG.ChunkOverlap)
 		if len(chunks) > 0 {
-			result = append(result, chunks...)
+			state.result = append(state.result, chunks...)
 		}
 	}
-	return result
+	if !final {
+		state.currentContent = ""
+	}
 }
-
 
 // update previous records with title if it is empty
 func updateTitleOfPreviousRecords(result []BGSection, chapter string, title string) []BGSection {
@@ -170,6 +152,11 @@ func updateExpandedTitleOfPreviousRecords(result []BGSection, chapter string, ex
 
 
 // chunk content
+// chunkSaveContent breaks the content of a BGSection into chunks based on the
+// maxChars and overlapChars parameters. It returns a slice of BGSection, each
+// with a chunk of the content, and the same chapter, title, expanded title, and speaker
+// as the original contentEntry. The ChunkID is set to the index of the chunk
+// in the slice.
 func chunkSaveContent(contentEntry BGSection, maxChars, overlapChars int) []BGSection {
 	var result []BGSection
 	for i, chunk := range chunkContent(contentEntry.Content, maxChars, overlapChars) {
@@ -184,3 +171,4 @@ func chunkSaveContent(contentEntry BGSection, maxChars, overlapChars int) []BGSe
 	}
 	return result
 }
+
