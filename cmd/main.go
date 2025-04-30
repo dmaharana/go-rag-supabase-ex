@@ -13,6 +13,7 @@ import (
 	"document-rag/internal/config"
 	"document-rag/internal/db"
 	"document-rag/internal/embedding"
+	"document-rag/internal/helper"
 	"document-rag/internal/parser"
 	"document-rag/internal/rag"
 )
@@ -28,24 +29,33 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).With().Caller().Logger()
 
 	filePath := flag.String("file", "", "Path to the document file")
-	query := flag.String("query", "", "Query to be answered")
+	// query := flag.String("query", "", "Query to be answered")
 	flag.Parse()
 
-	if *filePath != "" && *query != "" {
-		log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag, but not both")
-	}
 
+	// TODO: parse bg file and print the result
 	if *filePath != "" {
-		storeFileEmbedding(context.Background(), *filePath)
-		return
+		parseBGText(context.Background(), *filePath)
 	}
 
-	if *query != "" {
-		performRAG(context.Background(), *query)
-		return
-	}
 
-	log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag")
+
+
+	// if *filePath != "" && *query != "" {
+	// 	log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag, but not both")
+	// }
+
+	// if *filePath != "" {
+	// 	storeFileEmbedding(context.Background(), *filePath)
+	// 	return
+	// }
+
+	// if *query != "" {
+	// 	performRAG(context.Background(), *query)
+	// 	return
+	// }
+
+	// log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag")
 }
 
 func storeFileEmbedding(ctx context.Context, filePath string) {
@@ -140,4 +150,17 @@ func performRAG(ctx context.Context, query string) {
 
 	fmt.Printf("%s\n\n", response.Content)
 
+}
+
+func parseBGText(ctx context.Context, filePath string) {
+	cfg, err := config.LoadConfig(configFilePath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error loading config")
+	}
+
+	log.Debug().Interface("config", cfg).Msg("Loaded config")
+
+	content := parser.ParseBGText(filePath, cfg)
+	log.Info().Msg("Parsed content")
+	helper.PrettyPrint(content)
 }

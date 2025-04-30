@@ -8,6 +8,7 @@ require (
 	github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80
 	github.com/lib/pq v1.10.9
 	github.com/nguyenthenguyen/docx v0.0.0-20230621112118-9c8e795a11db
+	github.com/philippgille/chromem-go v0.7.0
 	github.com/rs/zerolog v1.34.0
 	github.com/tealeg/xlsx v1.0.5
 	github.com/tmc/langchaingo v0.1.13
