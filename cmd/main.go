@@ -7,9 +7,11 @@ import (
 	"os"
 	"time"
 
+	"github.com/philippgille/chromem-go"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
+	"document-rag/internal/chromemdb"
 	"document-rag/internal/config"
 	"document-rag/internal/db"
 	"document-rag/internal/embedding"
@@ -158,9 +160,63 @@ func parseBGText(ctx context.Context, filePath string) {
 		log.Fatal().Err(err).Msg("Error loading config")
 	}
 
+	const (
+		dbPath       = "./chromemdb"
+		collectionName = "bg_collection"
+	)
+
+	// create folder
+	err = helper.CreateFolder(dbPath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating folder")
+	}
+
 	log.Debug().Interface("config", cfg).Msg("Loaded config")
 
 	content := parser.ParseBGText(filePath, cfg)
 	log.Info().Msg("Parsed content")
 	helper.PrettyPrint(content)
+
+	// embed content
+	embedder, err := embedding.NewOllamaEmbedder(&cfg.EmbedLLM)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error initializing embedder")
+	}
+
+	var docs []chromem.Document
+	for _, section := range content {
+		// if content is empty, skip
+		if section.Content == "" {
+			continue
+		}
+		embedding, err := embedder.EmbedQuery(ctx, section.Content)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Error generating embedding")
+		}
+		docs = append(docs, chromem.Document{
+			ID:        fmt.Sprintf("%s-%s-%d", section.Chapter, section.Speaker, section.ChunkID),
+			Content:   section.Content,
+			Metadata:  parser.CreateMetadata(section),
+			Embedding: embedding,
+		})
+	}
+
+	// store content in database
+	// create chromemdb
+	db, err := chromemdb.NewVectorDBManager(dbPath, collectionName)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating vector database manager")
+	}
+
+	// delete collection first
+	err = db.DeleteCollection()
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error deleting collection")
+	}
+
+	// add content to chromemdb
+	err = db.CreateDocs(docs)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error adding content to vector database")
+	}
 }

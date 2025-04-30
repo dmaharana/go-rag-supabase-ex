@@ -7,3 +7,4 @@ build/*
 *.pptx
 *.xlsx
 gorag
+chromemdb

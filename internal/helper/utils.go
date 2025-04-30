@@ -3,6 +3,8 @@ package helper
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+
 	"github.com/rs/zerolog/log"
 
 	"github.com/google/uuid"
@@ -26,3 +28,9 @@ func PrettyPrint(v interface{}) {
 	fmt.Println(string(b))
 }
 
+func CreateFolder(folderPath string) error {
+	if _, err := os.Stat(folderPath); os.IsNotExist(err) {
+		return os.MkdirAll(folderPath, os.ModePerm)
+	}
+	return nil
+}

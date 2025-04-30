@@ -12,3 +12,12 @@ type PromptResponse struct {
 	Source  string
 	Content string
 }
+
+// ChunkEmbedding holds the content, embedding, and metadata for a single chunk
+type ChunkEmbedding struct {
+	Content        string
+	Embedding      []float32
+	SourceFilename string
+	PageNumber     int // Nullable for non-paged formats
+	ChunkID        int
+}

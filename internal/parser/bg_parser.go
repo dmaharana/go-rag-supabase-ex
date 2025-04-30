@@ -2,6 +2,7 @@ package parser
 
 import (
 	"bufio"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -172,3 +173,13 @@ func chunkSaveContent(contentEntry BGSection, maxChars, overlapChars int) []BGSe
 	return result
 }
 
+// create metadata map[string]string from BGSection
+func CreateMetadata(contentEntry BGSection) map[string]string {
+	return map[string]string{
+		"chapter":       contentEntry.Chapter,
+		"title":         contentEntry.Title,
+		"expanded_title": contentEntry.ExpandedTitle,
+		"speaker":       contentEntry.Speaker,
+		"chunk_id":      fmt.Sprintf("%d", contentEntry.ChunkID),
+	}
+}
