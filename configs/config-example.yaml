@@ -20,3 +20,4 @@ rag_config:
   chunk_size: 1000
   chunk_overlap: 500
   max_results: 3
+  encryption_key: "32 bytes encryption key"

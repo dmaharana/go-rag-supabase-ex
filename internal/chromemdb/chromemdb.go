@@ -2,12 +2,11 @@ package chromemdb
 
 import (
 	"context"
-	"document-rag/internal/helper"
-	"document-rag/internal/models"
 	"fmt"
 	"runtime"
 
 	"github.com/philippgille/chromem-go"
+	"github.com/rs/zerolog/log"
 )
 
 // Document represents our data structure with content and metadata
@@ -25,29 +24,49 @@ type VectorDBManager struct {
 	db         *chromem.DB
 	collection *chromem.Collection
 	ctx        context.Context
+	dbPath     string
+	compress   bool
+	encryptionKey string
+	filePath   string
 }
 
-// NewVectorDBManager initializes a new vector database manager
-func NewVectorDBManager(dbPath,collectionName string) (*VectorDBManager, error) {
-	ctx := context.Background()
-	compress := true
-	// db := chromem.NewDB()
-	db, err := chromem.NewPersistentDB(dbPath, compress)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create database: %v", err)
-	}
+const (
+	compress = false
+)
 
-	// Create or get collection with default embedding function
-	collection, err := db.GetOrCreateCollection(collectionName, nil, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create/get collection: %v", err)
+// NewVectorDBManager initializes a new vector database manager
+func NewVectorDBManager(dbPath,collectionName string, inMemory bool, encryptionKey string) (*VectorDBManager, error) {
+	ctx := context.Background()
+	var db *chromem.DB
+	var err error
+	if inMemory {
+		db = chromem.NewDB()
+	} else {
+		db, err = chromem.NewPersistentDB(dbPath, compress)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create database: %v", err)
+		}
 	}
 
 	return &VectorDBManager{
 		db:         db,
-		collection: collection,
+		collection: nil,
 		ctx:        ctx,
+		dbPath:     dbPath,
+		compress:   compress,
+		encryptionKey: encryptionKey,
+		filePath:   dbPath + "/" + collectionName + ".chromem",
 	}, nil
+}
+
+// create or read collection
+func (m *VectorDBManager) GetOrCreateCollection(collectionName string) (*chromem.Collection, error) {
+	c, 	err := m.db.GetOrCreateCollection(collectionName, nil, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create/get collection: %v", err)
+	}
+	m.collection = c
+	return c, nil
 }
 
 // Create adds a new document with content, metadata, and optional embedding
@@ -76,26 +95,18 @@ func (m *VectorDBManager) CreateDocs(documents []chromem.Document) error {
 }
 
 // Read retrieves documents by ID or performs a similarity search
-func (m *VectorDBManager) Read(id string, query string, limit int) ([]chromem.Result, error) {
-	if id != "" {
-		// Query by ID (exact match)
-		results, err := m.collection.Query(m.ctx, "", 1, map[string]string{"id": id}, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query by ID: %v", err)
-		}
-		return results, nil
+func (m *VectorDBManager) SearchWithQueryOptions(ctx context.Context, opts chromem.QueryOptions) ([]chromem.Result, error) {
+	// exit if query or embedding is not provided
+	if opts.QueryText == "" && opts.QueryEmbedding == nil {
+		return nil, fmt.Errorf("either query or embedding must be provided")
 	}
 
-	if query != "" {
-		// Perform similarity search
-		results, err := m.collection.Query(m.ctx, query, limit, nil, nil)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query by similarity: %v", err)
-		}
-		return results, nil
+	// Perform similarity search
+	results, err := m.collection.QueryWithOptions(m.ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query by similarity: %v", err)
 	}
-
-	return nil, fmt.Errorf("either id or query must be provided")
+	return results, nil
 }
 
 // delete collection
@@ -107,24 +118,35 @@ func (m *VectorDBManager) DeleteCollection() error {
 	return nil
 }
 
-// convert chunkEmbedding to chromem.Document
-func (m *VectorDBManager) convertToDocument(chunkEmbeddings []models.ChunkEmbedding) []chromem.Document {
-	var documents []chromem.Document
-	for _, chunkEmbedding := range chunkEmbeddings {
-		id, err := helper.GenerateUUID()
-		if err != nil {
-			id = fmt.Sprintf("chunk-%d", chunkEmbedding.ChunkID)
-		}
-		documents = append(documents, chromem.Document{
-			ID:      id,
-			Content: chunkEmbedding.Content,
-			Metadata: map[string]string{
-				"source_filename": chunkEmbedding.SourceFilename,
-				"page_number":     fmt.Sprintf("%d", chunkEmbedding.PageNumber),
-				"chunk_id":        fmt.Sprintf("%d", chunkEmbedding.ChunkID),
-			},
-			Embedding: chunkEmbedding.Embedding,
-		})
+// export to file
+func (m *VectorDBManager) Export(ctx context.Context) error {
+	if m.encryptionKey == "" {
+		return fmt.Errorf("encryption key is required")
 	}
-	return documents
+	if m.collection == nil {
+		return fmt.Errorf("collection is required")
+	}
+	if m.dbPath == "" {
+		return fmt.Errorf("db path is required")
+	}
+
+	log.Debug().Msgf("Collection name: %s", m.collection.Name)
+	log.Debug().Msgf("File path: %s", m.filePath)
+	log.Debug().Msgf("Compress: %t", m.compress)
+	log.Debug().Msgf("DB path: %s", m.dbPath)
+	// export collection
+	err := m.db.ExportToFile(m.filePath, m.compress, m.encryptionKey, m.collection.Name)
+	if err != nil {
+		return fmt.Errorf("failed to export database: %v", err)
+	}
+	return nil
+}
+
+// import from file
+func (m *VectorDBManager) Import(ctx context.Context) error {
+	err := m.db.ImportFromFile(m.dbPath, m.collection.Name)
+	if err != nil {
+		return fmt.Errorf("failed to import database: %v", err)
+	}
+	return nil
 }

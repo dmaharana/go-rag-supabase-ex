@@ -9,6 +9,9 @@ import (
 	"document-rag/internal/db"
 	"document-rag/internal/models"
 
+	"document-rag/internal/chromemdb"
+
+	"github.com/philippgille/chromem-go"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/openai"
@@ -17,6 +20,7 @@ import (
 
 type RAG struct {
 	db         *bun.DB
+	chromemdb  *chromemdb.VectorDBManager
 	embedder   *embeddings.EmbedderImpl
 	cfg        *config.Config
 	maxResults int
@@ -24,9 +28,10 @@ type RAG struct {
 
 const defaultMaxResults = 5
 
-func NewRAG(db *bun.DB, embedder *embeddings.EmbedderImpl, cfg *config.Config) *RAG {
+func NewRAG(db *bun.DB, chromemdb *chromemdb.VectorDBManager, embedder *embeddings.EmbedderImpl, cfg *config.Config) *RAG {
 	return &RAG{
 		db:       db,
+		chromemdb: chromemdb,
 		embedder: embedder,
 		cfg:      cfg,
 		maxResults: func() int {
@@ -54,19 +59,39 @@ func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, e
 		r.maxResults = defaultMaxResults
 	}
 
-	docs, err := db.SearchDocuments(ctx, r.db, queryEmbedding, r.maxResults)
-	if err != nil {
-		return rsp, err
-	}
-
 	var qContext strings.Builder
 	var references []string
-	for i, doc := range docs {
-		qContext.WriteString(doc.Content + "\n\n")
-
-		// Build reference string
-		ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.SourceFilename, doc.PageNumber, doc.ChunkID)
-		references = append(references, fmt.Sprintf("[%d] %s", i+1, ref))
+	if r.db != nil {
+		docs, err := db.SearchDocuments(ctx, r.db, queryEmbedding, r.maxResults)
+		if err != nil {
+			return rsp, err
+		}
+		
+		for i, doc := range docs {
+			qContext.WriteString(doc.Content + "\n\n")
+			
+			// Build reference string
+			ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.SourceFilename, doc.PageNumber, doc.ChunkID)
+			references = append(references, fmt.Sprintf("[%d] %s", i+1, ref))
+		}
+	} else if r.chromemdb != nil {
+		queryOptions := chromem.QueryOptions{
+			QueryText: query,
+			QueryEmbedding: queryEmbedding,
+			NResults: r.maxResults,
+		}
+		docs, err := r.chromemdb.SearchWithQueryOptions(ctx, queryOptions)
+		if err != nil {
+			return rsp, err
+		}
+		
+		for _, doc := range docs {
+			qContext.WriteString(doc.Content + "\n\n")
+			
+			// Build reference string
+			// ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.Metadata["source_filename"], doc.Metadata["page_number"], doc.Metadata["chunk_id"])
+			references = append(references, fmt.Sprintf("%v", doc.Metadata))
+		}
 	}
 
 	if qContext.String() == "" {
@@ -89,7 +114,7 @@ func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, e
 	msgContent := []llms.MessageContent{
 		llms.MessageContent{
 			Role:  llms.ChatMessageTypeSystem,
-			Parts: []llms.ContentPart{llms.TextContent{Text: "You are a helpful assistant. Answer the query based only on the provided context."}},
+			Parts: []llms.ContentPart{llms.TextContent{Text: "You are a helpful assistant. Answer the query based only on the provided context. If the context does not contain the answer, respond with 'I don't know.'"}},
 		},
 		llms.MessageContent{
 			Role:  llms.ChatMessageTypeHuman,

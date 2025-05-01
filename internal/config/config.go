@@ -32,6 +32,7 @@ type RAGConfig struct {
 	ChunkSize    int `yaml:"chunk_size"`
 	ChunkOverlap int `yaml:"chunk_overlap"`
 	MaxResults   int `yaml:"max_results"`
+	EncryptionKey string `yaml:"encryption_key"`
 }
 
 func LoadConfig(path string) (*Config, error) {

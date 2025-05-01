@@ -31,21 +31,22 @@ func main() {
 	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}).With().Caller().Logger()
 
 	filePath := flag.String("file", "", "Path to the document file")
-	// query := flag.String("query", "", "Query to be answered")
+	query := flag.String("query", "", "Query to be answered")
 	flag.Parse()
 
-
+	
 	// TODO: parse bg file and print the result
 	if *filePath != "" {
 		parseBGText(context.Background(), *filePath)
 	}
+	
+	if *filePath != "" && *query != "" {
+		log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag, but not both")
+	}
 
-
-
-
-	// if *filePath != "" && *query != "" {
-	// 	log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag, but not both")
-	// }
+	if *query != "" {
+		searchBGContent(context.Background(), *query)
+	}
 
 	// if *filePath != "" {
 	// 	storeFileEmbedding(context.Background(), *filePath)
@@ -136,7 +137,7 @@ func performRAG(ctx context.Context, query string) {
 		log.Fatal().Err(err).Msg("Error initializing embedder")
 	}
 
-	rag := rag.NewRAG(dbInstance, embedder, cfg)
+	rag := rag.NewRAG(dbInstance, nil, embedder, cfg)
 	response, err := rag.Query(ctx, query)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error querying")
@@ -154,16 +155,18 @@ func performRAG(ctx context.Context, query string) {
 
 }
 
+const (
+	dbPath       = "./chromemdb"
+	collectionName = "bg_collection"
+	inMemory = false
+)
+
 func parseBGText(ctx context.Context, filePath string) {
 	cfg, err := config.LoadConfig(configFilePath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error loading config")
 	}
 
-	const (
-		dbPath       = "./chromemdb"
-		collectionName = "bg_collection"
-	)
 
 	// create folder
 	err = helper.CreateFolder(dbPath)
@@ -203,20 +206,77 @@ func parseBGText(ctx context.Context, filePath string) {
 
 	// store content in database
 	// create chromemdb
-	db, err := chromemdb.NewVectorDBManager(dbPath, collectionName)
+	db, err := chromemdb.NewVectorDBManager(dbPath, collectionName, inMemory, cfg.RAG.EncryptionKey)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error creating vector database manager")
 	}
 
-	// delete collection first
-	err = db.DeleteCollection()
+	// create collection
+	_, err = db.GetOrCreateCollection(collectionName)
 	if err != nil {
-		log.Fatal().Err(err).Msg("Error deleting collection")
+		log.Fatal().Err(err).Msg("Error creating collection")
 	}
+
+	// delete collection first
+	// err = db.DeleteCollection()
+	// if err != nil {
+	// 	log.Fatal().Err(err).Msg("Error deleting collection")
+	// }
+
+	log.Info().Msgf("Adding %d documents to vector database", len(docs))
 
 	// add content to chromemdb
 	err = db.CreateDocs(docs)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error adding content to vector database")
 	}
+
+	if inMemory {
+		// export collection
+		err = db.Export(ctx)
+		if err != nil {
+			log.Fatal().Err(err).Msg("Error exporting collection")
+		}
+	}
+}
+
+// search bg content
+func searchBGContent(ctx context.Context, query string) (error) {
+	cfg, err := config.LoadConfig(configFilePath)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error loading config")
+	}
+	// create chromemdb
+	db, err := chromemdb.NewVectorDBManager(dbPath, collectionName, inMemory, cfg.RAG.EncryptionKey)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating vector database manager")
+	}
+
+	// create collection
+	_, err = db.GetOrCreateCollection(collectionName)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error creating collection")
+	}
+
+	embedder, err := embedding.NewOllamaEmbedder(&cfg.EmbedLLM)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error initializing embedder")
+	}
+
+	rag := rag.NewRAG(nil, db, embedder, cfg)
+	response, err := rag.Query(ctx, query)
+	if err != nil {
+		log.Fatal().Err(err).Msg("Error querying")
+	}
+
+	log.Info().Msg("Query: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+	fmt.Printf("%s\n\n", query)
+
+	log.Info().Msg("Source: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+	fmt.Printf("%s\n\n", response.Source)
+
+	log.Info().Msg("Assistant: ~~~~~~~~~~~~~~~~~~~~~~~~~>>>>>")
+	fmt.Printf("%s\n\n", response.Content)
+
+	return nil
 }
