@@ -32,20 +32,22 @@ func main() {
 
 	filePath := flag.String("file", "", "Path to the document file")
 	query := flag.String("query", "", "Query to be answered")
+	dryRun := flag.Bool("dry-run", false, "Dry run, do not save to database")
 	flag.Parse()
 
-	
 	// TODO: parse bg file and print the result
 	if *filePath != "" {
-		parseBGText(context.Background(), *filePath)
+		parseBGText(context.Background(), *filePath, *dryRun)
+		return
 	}
-	
+
 	if *filePath != "" && *query != "" {
 		log.Fatal().Msg("Please provide either a document file using the -file flag or a query using the -query flag, but not both")
 	}
 
 	if *query != "" {
 		searchBGContent(context.Background(), *query)
+		return
 	}
 
 	// if *filePath != "" {
@@ -156,17 +158,17 @@ func performRAG(ctx context.Context, query string) {
 }
 
 const (
-	dbPath       = "./chromemdb"
+	dbPath         = "./chromemdb"
 	collectionName = "bg_collection"
-	inMemory = false
+	inMemory       = false
 )
 
-func parseBGText(ctx context.Context, filePath string) {
+func parseBGText(ctx context.Context, filePath string, dryRun bool) {
+	// load config
 	cfg, err := config.LoadConfig(configFilePath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error loading config")
 	}
-
 
 	// create folder
 	err = helper.CreateFolder(dbPath)
@@ -176,10 +178,19 @@ func parseBGText(ctx context.Context, filePath string) {
 
 	log.Debug().Interface("config", cfg).Msg("Loaded config")
 
+	// parse content
 	content := parser.ParseBGText(filePath, cfg)
 	log.Info().Msg("Parsed content")
 	helper.PrettyPrint(content)
 
+	// add context
+	// content = parser.AddContextByChapter(content, cfg)
+	// log.Info().Msg("Content with context")
+	// helper.PrettyPrint(content)
+
+	if dryRun {
+		return
+	}
 	// embed content
 	embedder, err := embedding.NewOllamaEmbedder(&cfg.EmbedLLM)
 	if err != nil {
@@ -241,7 +252,7 @@ func parseBGText(ctx context.Context, filePath string) {
 }
 
 // search bg content
-func searchBGContent(ctx context.Context, query string) (error) {
+func searchBGContent(ctx context.Context, query string) error {
 	cfg, err := config.LoadConfig(configFilePath)
 	if err != nil {
 		log.Fatal().Err(err).Msg("Error loading config")

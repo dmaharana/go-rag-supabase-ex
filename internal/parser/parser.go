@@ -11,6 +11,7 @@ import (
 
 	"document-rag/internal/config"
 	"document-rag/internal/models"
+
 	"github.com/ledongthuc/pdf"
 	"github.com/nguyenthenguyen/docx"
 	"github.com/tealeg/xlsx"
@@ -313,6 +314,7 @@ func extractTextFromXML(xmlContent string) string {
 	return text.String()
 }
 
+// chunk content into chunks with maxChars and overlapChars
 func chunkContent(content string, maxChars, overlapChars int) []string {
 	// Handle edge cases
 	if maxChars <= 0 {
@@ -386,4 +388,23 @@ func (p *ParserConfig) getChunks(content string, pageNumber int) []models.Chunk 
 	}
 
 	return chunks
+}
+
+// return complete content from chunks based on related chunkIDs and overlapCharLen
+//
+//	logic is to trim the content of each chunk to the last overlapCharLen characters
+//	and then append the content of the next chunk, last chunk is appended as is
+func getCompleteContent(chunks []models.Chunk, overlapCharLen int) string {
+	var content strings.Builder
+	for i, chunk := range chunks {
+		chunkContent := chunk.Content
+		if i < len(chunks)-1 {
+			contentLen := len(chunkContent)
+			if contentLen > 0 && contentLen > overlapCharLen {
+				chunkContent = chunkContent[contentLen-overlapCharLen:]
+			}
+		}
+		content.WriteString(chunkContent)
+	}
+	return content.String()
 }

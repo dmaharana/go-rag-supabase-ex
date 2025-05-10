@@ -10,11 +10,11 @@ import (
 	"document-rag/internal/models"
 
 	"document-rag/internal/chromemdb"
+	"document-rag/internal/llmservice"
 
 	"github.com/philippgille/chromem-go"
 	"github.com/tmc/langchaingo/embeddings"
 	"github.com/tmc/langchaingo/llms"
-	"github.com/tmc/langchaingo/llms/openai"
 	"github.com/uptrace/bun"
 )
 
@@ -30,10 +30,10 @@ const defaultMaxResults = 5
 
 func NewRAG(db *bun.DB, chromemdb *chromemdb.VectorDBManager, embedder *embeddings.EmbedderImpl, cfg *config.Config) *RAG {
 	return &RAG{
-		db:       db,
+		db:        db,
 		chromemdb: chromemdb,
-		embedder: embedder,
-		cfg:      cfg,
+		embedder:  embedder,
+		cfg:       cfg,
 		maxResults: func() int {
 			if cfg.RAG.MaxResults > 0 {
 				return cfg.RAG.MaxResults
@@ -66,28 +66,28 @@ func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, e
 		if err != nil {
 			return rsp, err
 		}
-		
+
 		for i, doc := range docs {
 			qContext.WriteString(doc.Content + "\n\n")
-			
+
 			// Build reference string
 			ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.SourceFilename, doc.PageNumber, doc.ChunkID)
 			references = append(references, fmt.Sprintf("[%d] %s", i+1, ref))
 		}
 	} else if r.chromemdb != nil {
 		queryOptions := chromem.QueryOptions{
-			QueryText: query,
+			QueryText:      query,
 			QueryEmbedding: queryEmbedding,
-			NResults: r.maxResults,
+			NResults:       r.maxResults,
 		}
 		docs, err := r.chromemdb.SearchWithQueryOptions(ctx, queryOptions)
 		if err != nil {
 			return rsp, err
 		}
-		
+
 		for _, doc := range docs {
 			qContext.WriteString(doc.Content + "\n\n")
-			
+
 			// Build reference string
 			// ref := fmt.Sprintf("Source: %s, Page: %d, Chunk: %d", doc.Metadata["source_filename"], doc.Metadata["page_number"], doc.Metadata["chunk_id"])
 			references = append(references, fmt.Sprintf("%v", doc.Metadata))
@@ -100,14 +100,14 @@ func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, e
 
 	rsp.Source = qContext.String()
 
-	llm, err := openai.New(
-		openai.WithBaseURL(r.cfg.QueryLLM.BaseURL),
-		openai.WithToken(strings.TrimPrefix(r.cfg.QueryLLM.Key, "Bearer ")),
-		openai.WithModel(r.cfg.QueryLLM.Model),
-	)
-	if err != nil {
-		return rsp, err
-	}
+	// llm, err := openai.New(
+	// 	openai.WithBaseURL(r.cfg.QueryLLM.BaseURL),
+	// 	openai.WithToken(strings.TrimPrefix(r.cfg.QueryLLM.Key, "Bearer ")),
+	// 	openai.WithModel(r.cfg.QueryLLM.Model),
+	// )
+	// if err != nil {
+	// 	return rsp, err
+	// }
 
 	var response strings.Builder
 	prompt := fmt.Sprintf("Based on the following context, answer the query: %s\n\nContext:\n%s", query, qContext.String())
@@ -132,7 +132,8 @@ func (r *RAG) Query(ctx context.Context, query string) (models.PromptResponse, e
 	// 	return nil
 	// }))
 
-	res, err := llm.GenerateContent(ctx, msgContent)
+	// res, err := llm.GenerateContent(ctx, msgContent)
+	res, err := llmservice.GenerateContent(ctx, &r.cfg.QueryLLM, nil, msgContent)
 	if err != nil {
 		return rsp, err
 	}

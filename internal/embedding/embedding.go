@@ -2,6 +2,7 @@ package embedding
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -10,8 +11,11 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"document-rag/internal/config"
+	"document-rag/internal/llmservice"
 	"document-rag/internal/models"
+
 	"github.com/tmc/langchaingo/embeddings"
+	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/ollama"
 	"github.com/tmc/langchaingo/llms/openai"
 )
@@ -95,4 +99,23 @@ func GenerateEmbedding(ctx context.Context, embedder *embeddings.EmbedderImpl, f
 	}
 
 	return chunkEmbeddings, nil
+}
+
+// generate context for each chunk and return new chunks
+func GenerateContext(ctx context.Context, llmConfig *config.LLMConfig, document, chunk string) (string, error) {
+	log.Debug().Msgf("Generating context for chunk: %s", chunk)
+	prompt := fmt.Sprintf(models.ContextPromptTemplate, document, chunk)
+
+	msgContent := []llms.MessageContent{
+		llms.MessageContent{
+			Role:  llms.ChatMessageTypeHuman,
+			Parts: []llms.ContentPart{llms.TextContent{Text: prompt}},
+		},
+	}
+
+	res, err := llmservice.GenerateContent(ctx, llmConfig, nil, msgContent)
+	if err != nil {
+		return "", err
+	}
+	return res.Choices[0].Content, nil
 }
